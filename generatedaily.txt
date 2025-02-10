@@ -1,0 +1,62 @@
+function generateDailyQuests(userProfile) {
+    if (!userProfile.quests) {
+        userProfile.quests = {
+            active: {},
+            progress: {},
+            lastReset: Date.now(),
+            lastQuestGeneration: Date.now(),
+        };
+    } else {
+        userProfile.quests.active = userProfile.quests.active || {};
+        userProfile.quests.progress = userProfile.quests.progress || {};
+        userProfile.quests.lastReset = userProfile.quests.lastReset || Date.now();
+        userProfile.quests.lastQuestGeneration = userProfile.quests.lastQuestGeneration || Date.now();
+    }
+
+    const now = Date.now();
+    const cooldownPeriod = 3600000 ; // 1 hour in milliseconds
+    const timeSinceLastGeneration = now - userProfile.quests.lastQuestGeneration;
+
+    console.log('--- Debug Logs ---');
+    console.log('Current Time:', new Date(now).toISOString());
+    console.log('Last Quest Generation:', new Date(userProfile.quests.lastQuestGeneration).toISOString());
+    console.log('Time Since Last Generation (ms):', timeSinceLastGeneration);
+
+    const allQuestsCompleted = Object.keys(userProfile.quests.active).length === 0;
+    const shouldReset = allQuestsCompleted && timeSinceLastGeneration >= cooldownPeriod;
+
+    console.log('All Quests Completed:', allQuestsCompleted);
+    console.log('Should Reset:', shouldReset);
+
+    if (shouldReset) {
+        // Reset quests and update the generation timestamp
+        userProfile.quests.active = {};
+        userProfile.quests.progress = {};
+        userProfile.quests.lastReset = now;
+        userProfile.quests.lastQuestGeneration = now; // Update ONLY when quests are reset!
+
+        const availableQuests = Object.keys(questTypes);
+        const selectedQuests = [];
+        while (selectedQuests.length < 3 && availableQuests.length > 0) {
+            const randomIndex = Math.floor(Math.random() * availableQuests.length);
+            const questType = availableQuests.splice(randomIndex, 1)[0];
+            selectedQuests.push(questType);
+        }
+
+        selectedQuests.forEach((questType) => {
+            userProfile.quests.active[questType] = { ...questTypes[questType] };
+            userProfile.quests.progress[questType] = 0;
+        });
+
+        console.log('New Quests Generated:', userProfile.quests.active);
+    }
+
+    const remainingCooldown = allQuestsCompleted
+        ? Math.max(cooldownPeriod - timeSinceLastGeneration, 0)
+        : 0;
+
+    console.log('Remaining Cooldown (ms):', remainingCooldown);
+    console.log('-------------------');
+
+    return { quests: userProfile.quests, remainingCooldown };
+}
