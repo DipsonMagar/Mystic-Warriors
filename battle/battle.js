@@ -9,7 +9,7 @@ const Guild = require('../guildSchema');
 
 let frostbiteHits = 0; // Initialize a variable to keep track of the number of hits for the frostbite axe
 let canUseHealPotion = true; // Cooldown tracking for Heal Potion
-let dodgemsg = "";
+
 
 
 // Player stats (reset HP after each battle)
@@ -295,7 +295,16 @@ activeBattles[userId].lastPress = now;
                 // healPotionButton.setDisabled(userProfile.inventory.battleItems["Heal Potion"] <= 0);
                 row.setComponents(attackButton, forfeitButton, healPotionButton);
     
-                await interaction.update({ embeds: [embed], components: [row] });
+                try {
+                    if (interaction.replied || interaction.deferred) {
+                        await interaction.followUp({ embeds: [embed], components: [row] });
+                    } else {
+                        await interaction.update({ embeds: [embed], components: [row] });
+                    }
+                } catch (error) {
+                    console.error("Failed to update interaction:", error.message);
+                }
+                
             } else {
                 await interaction.reply({ content: 'You have no Heal Potions left!', ephemeral: true });
             }
@@ -304,8 +313,9 @@ activeBattles[userId].lastPress = now;
 
         if (interaction.customId === 'attack') {
 
-let arcaneBoostMessage = ""; // Ensure it's always initialized
-let instantkill = "";
+        let arcaneBoostMessage = ""; // Ensure it's always initialized
+        let instantkill = "";
+        let dodgemsg = "";
 
 
             let playerDamage = playerStats.damage;
@@ -396,13 +406,18 @@ let instantkill = "";
                     }
 
                     // Night Veil Activation
-                    const nightVeilChance = Math.random();
-                    if (nightVeilChance <= 0.5) {
-                        playerStats.nightVeilActive = true;
-                        dodgemsg = `\n**Night Veil Activated! You dodge enemy attack!**`;
+                    if (userProfile.equippedWeapon === 'lunar fang') {
+                        const nightVeilChance = Math.random();
+                        if (nightVeilChance <= 0.5) {
+                            playerStats.nightVeilActive = true;
+                            dodgemsg = `\n**Night Veil Activated! You dodge enemy attack!**`;
+                        } else {
+                            dodgemsg = '';
+                        }
                     } else {
-                        dodgemsg = '';
+                        playerStats.nightVeilActive = false; // Reset Night Veil when not using Lunar Fang
                     }
+                    
                 }
                 
                 
@@ -422,6 +437,7 @@ let instantkill = "";
 
 
             if (enemy.hp <= 0) {
+                collector.stop();
             
                 const goldReward = Math.floor(Math.random() * (enemy.coinReward.max - enemy.coinReward.min + 1)) + enemy.coinReward.min;
 
@@ -663,7 +679,16 @@ let instantkill = "";
                 }
 
                 embed.setDescription(description);
-                await interaction.update({ embeds: [embed], components: [row] });
+                try {
+                    if (interaction.replied || interaction.deferred) {
+                        await interaction.followUp({ embeds: [embed], components: [row] });
+                    } else {
+                        await interaction.update({ embeds: [embed], components: [row] });
+                    }
+                } catch (error) {
+                    console.error("Failed to update interaction:", error.message);
+                }
+                
 
                 if (playerStats.hp <= 0) {
                     playerStats.hp = 0; // Ensure no negative HP
