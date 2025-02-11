@@ -2575,6 +2575,125 @@ if (message.content.startsWith('!guild upgrade')) {
 }
 
 
+//guild bank 
+
+if (message.content.startsWith('!guild donate')) {
+    const args = message.content.split(' ');
+    const userId = message.author.id;
+    const guild = await Guild.findOne({ members: userId });
+    
+    if (!guild) {
+        return message.channel.send("❌ You are not in a guild.");
+    }
+
+    if (args.length < 3) {
+        return message.channel.send("⚠️ Usage: `!guild donate [coins/gems] [amount]`");
+    }
+
+    const type = args[2].toLowerCase(); // Either 'coins' or 'gems'
+    const amount = parseInt(args[3]);
+
+    if (isNaN(amount) || amount <= 0) {
+        return message.channel.send("❌ Please enter a valid donation amount.");
+    }
+
+    // Fetch the player's profile
+    let userProfile = await getUserProfile(userId);
+
+    if (type === "coins") {
+        if (userProfile.coins < amount) {
+            return message.channel.send(`❌ You don't have enough <:coin:1300687053792739328> **coins** to donate.`);
+        }
+        userProfile.coins -= amount;
+        guild.bank.coins += amount;
+    } else if (type === "gems") {
+        if (userProfile.mysticGems < amount) {
+            return message.channel.send(`❌ You don't have enough <:mysticgem:1336377747357831311> **Mystic Gems** to donate.`);
+        }
+        userProfile.mysticGems -= amount;
+        guild.bank.gems += amount;
+    } else {
+        return message.channel.send("⚠️ Invalid donation type. Use `coins` or `gems`.");
+    }
+
+    // Save updates
+    await userProfile.save();
+    await guild.save();
+
+    return message.channel.send(`✅ You donated **${amount} ${type === "coins" ? "<:coin:1300687053792739328>" : "<:mysticgem:1336377747357831311>"}** to **${guild.name}**!`);
+}
+
+
+
+if (message.content.startsWith('!guild bank')) {
+    const userId = message.author.id;
+    const guild = await Guild.findOne({ members: userId });
+
+    if (!guild) {
+        return message.channel.send("❌ You are not in a guild.");
+    }
+
+    const embed = new EmbedBuilder()
+        .setColor('#FFD700')
+        .setTitle(`🏦 ${guild.name} Guild Bank`)
+        .setDescription(`Here are the total donations for your guild.`)
+        .addFields(
+            { name: "Total Coins", value: `<:coin:1300687053792739328> **${guild.bank.coins}**`, inline: true },
+            { name: "Total Mystic Gems", value: `<:mysticgem:1336377747357831311> **${guild.bank.gems}**`, inline: true }
+        )
+        .setFooter({ text: "Donate using `!guild donate [coins/gems] [amount]`" });
+
+    return message.channel.send({ embeds: [embed] });
+}
+
+//withdrawl guid bank
+if (message.content.startsWith('!guild withdraw') || message.content.startsWith('!guild w')) {
+    const args = message.content.split(' ');
+    const userId = message.author.id;
+    const guild = await Guild.findOne({ leader: userId });
+
+    if (!guild) {
+        return message.channel.send("❌ You are not a **Guild Leader**, so you cannot withdraw funds.");
+    }
+
+    if (args.length < 3) {
+        return message.channel.send("⚠️ Usage: `!guild withdraw [coins/gems] [amount]`");
+    }
+
+    const type = args[2].toLowerCase(); // Either 'coins' or 'gems'
+    const amount = parseInt(args[3]);
+
+    if (isNaN(amount) || amount <= 0) {
+        return message.channel.send("❌ Please enter a **valid amount** to withdraw.");
+    }
+
+    // Fetch the leader's profile
+    let leaderProfile = await getUserProfile(userId);
+
+    if (type === "coins") {
+        if (guild.bank.coins < amount) {
+            return message.channel.send(`❌ The guild bank **does not have enough** <:coin:1300687053792739328> **coins**.`);
+        }
+        guild.bank.coins -= amount;
+        leaderProfile.coins += amount;
+    } else if (type === "gems") {
+        if (guild.bank.gems < amount) {
+            return message.channel.send(`❌ The guild bank **does not have enough** <:mysticgem:1336377747357831311> **Mystic Gems**.`);
+        }
+        guild.bank.gems -= amount;
+        leaderProfile.mysticGems += amount;
+    } else {
+        return message.channel.send("⚠️ Invalid withdrawal type. Use `coins` or `gems`.");
+    }
+
+    // Save updates
+    await guild.save();
+    await leaderProfile.save();
+
+    return message.channel.send(`✅ **${amount} ${type === "coins" ? "<:coin:1300687053792739328>" : "<:mysticgem:1336377747357831311>"}** has been withdrawn from the guild bank and added to your balance!`);
+}
+
+
 
 
 

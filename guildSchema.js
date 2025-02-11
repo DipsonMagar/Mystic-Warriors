@@ -10,7 +10,13 @@ const guildSchema = new mongoose.Schema({
     verified: { type: Boolean, default: false },
     lastRewarded: { type: Date, default: null },
     invites: [{ type: String }],
-    goldBonus: { type: Number, default: 0 } // ✅ Gold bonus for guild perks
+    goldBonus: { type: Number, default: 0 }, // ✅ Gold bonus for guild perks
+
+    // ✅ New bank field to track total donations
+    bank: {
+        coins: { type: Number, default: 0 },
+        gems: { type: Number, default: 0 }
+    }
 });
 
 module.exports = mongoose.model('Guild', guildSchema);
