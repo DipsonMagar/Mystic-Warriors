@@ -16,7 +16,12 @@ const guildSchema = new mongoose.Schema({
     bank: {
         coins: { type: Number, default: 0 },
         gems: { type: Number, default: 0 }
-    }
+    },
+
+    guildPoints: { type: Number, default: 0 },  // Weekly Guild Points
+    memberPoints: { type: Map, of: Number, default: {} } // Individual Contributions
+
+    
 });
 
 module.exports = mongoose.model('Guild', guildSchema);

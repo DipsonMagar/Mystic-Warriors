@@ -2,10 +2,11 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('
 const path = require('path');
 const { questTypes,updateQuestProgress } = require('../quests');
 const User = require('../userSchema');
-const { activeBattles } = require('../state');
+const { activeBattles , activeArkBosses } = require('../state');
 const { isUserInBattle, addUserToBattle, removeUserFromBattle } = require('../state');
 const Guild = require('../guildSchema');
-
+const { handleFightRestriction } = require('../map'); // Import the fight restriction check
+const ArkBoss = require('../arkBossSchema'); // Import schema
 
 let frostbiteHits = 0; // Initialize a variable to keep track of the number of hits for the frostbite axe
 let canUseHealPotion = true; // Cooldown tracking for Heal Potion
@@ -85,9 +86,35 @@ const enemies = {
         coinReward: { min: 10000, max: 20000 },
         expReward: 2000,
         imagePath: path.join(__dirname, '..', 'images', 'pixelTundrag2.png'),
+    },
+    goblin_raider: {
+        id: 8,  // ✅ Replaces Dummy Enemy
+        maxHp: 1970,
+        hp: 1970,
+        damage: { min: 21, max: 31 },
+        coinReward: { min: 300, max: 900 },
+        expReward: 300,
+        imagePath: path.join(__dirname, '..', 'images', 'gbraider.png'), // Make sure you have an image!
+    },
+    shadow_revenant : {
+        id: 9,  // ✅ Replaces Dummy Enemy
+        maxHp: 7180,
+        hp: 7180,
+        damage: { min: 27, max: 47 },
+        coinReward: { min: 700, max: 1700 },
+        expReward: 1700,
+        imagePath: path.join(__dirname, '..', 'images', 'sr.png'), // Make sure you have an image!
+    },
+    goblin_lord: {
+        id: 99, // Unique ID for Ark Boss
+        maxHp: 100000,
+        hp: 100000,
+        damage: { min: 30, max: 40 },
+        coinReward: {min: 1000, max: 100000}, // Rewards distributed based on damage contribution
+        expReward: 5000,
+        imagePath: path.join(__dirname, '..', 'images', 'goblin_lord.png'), // Make sure you have an image!
     }
 };
-
 
 
 // Emojis
@@ -176,15 +203,74 @@ async function handleKnockout(playerId, message) {
 //battle
 const fight = async (message, enemyType, userProfile) => {
 
+
+    //guild points
+    const guildPointRewards = {
+        goblin: 10,
+        wolf: 15,
+        orc: 20,
+        elysia: 25,
+        cursed_knight: 30,
+        ancient_guard: 35,
+        tundragon: 40,
+        goblin_raider : 25,
+        shadow_revenant : 40
+    };
+    
+    if (userProfile.guild) {
+        let userGuild = await Guild.findOne({ name: userProfile.guild });
+        if (userGuild) {
+            const normalizedEnemy = enemyType.toLowerCase(); // Normalize case
+            const pointsEarned = guildPointRewards[normalizedEnemy] || 0;
+            
+            userGuild.guildPoints += pointsEarned;
+            userGuild.memberPoints.set(userProfile.userId, (userGuild.memberPoints.get(userProfile.userId) || 0) + pointsEarned);
+            await userGuild.save();
+        }
+    }
+    
+    
+
+
     if (knockedOutPlayers.has(message.author.id)) {
         return message.channel.send(`<@${message.author.id}> You're knocked out! Wait until your recovery time ends before jumping back into battle.`);
     }
 
 
-    const enemy = cloneEnemy(enemyType);
+    let enemy; // Declare enemy variable
+
+if (enemyType === 'goblin_lord') {
+    // Check if the boss is already in memory
+    if (!activeArkBosses['goblin_lord']) {
+        const boss = await ArkBoss.findOne({ bossName: 'goblin_lord' });
+        if (!boss) {
+            return message.channel.send("⚠️ **Goblin Lord has not been spawned yet!**");
+        }
+        // Store boss in memory for all players
+        activeArkBosses['goblin_lord'] = {
+            id: 99,
+            bossName: 'goblin_lord',
+            hp: boss.hp, // ✅ Shared HP from the database
+            maxHp: boss.maxHp,
+            damage: { min: 30, max: 40 },
+            coinReward: {min : 10000, max: 100000},
+            expReward: 5000,
+            imagePath: path.join(__dirname, '..', 'images', 'goblin_lord.png')
+        };
+    }
+    enemy = activeArkBosses['goblin_lord']; // ✅ All players now reference the same boss
+} else {
+    // Normal enemies use cloned instances
+    enemy = cloneEnemy(enemyType);
     if (!enemy) {
-        message.channel.send('Invalid enemy type! Use !fight goblin, !fight wolf, or !fight orc.');
-        return;
+        return message.channel.send('Invalid enemy type! Use !fight goblin, !fight wolf, or !fight orc.');
+    }
+}
+
+    // 🚫 Check if the player is allowed to fight this enemy in their current area
+    const canFight = await handleFightRestriction(userProfile, enemy.id);
+    if (!canFight) {
+        return message.channel.send(`🚫 You cannot fight **${enemyType}** while in **${userProfile.currentArea}**! Move to the correct area using \`!map exp [area]\`.`);
     }
 
       // 🚫 Prevent multiple battles
@@ -206,9 +292,31 @@ const playerStats = {
 };
 
     // Reset enemy HP and player HP at the start of each battle
-    enemy.hp = enemy.maxHp;
-    playerStats.hp = playerStats.maxHp;
-    playerStats.riftbreakerhits = 0;
+   // ✅ Prevent HP reset for Ark Bosses
+if (enemyType !== 'goblin_lord') {
+    enemy.hp = enemy.maxHp; // Normal enemies reset HP
+} else {
+    const boss = await ArkBoss.findOne({ bossName: 'goblin_lord' });
+    if (boss) {
+        enemy.hp = boss.hp; // ✅ Load saved HP for Goblin Lord
+    }
+}
+
+// Reset player stats
+playerStats.hp = playerStats.maxHp;
+playerStats.riftbreakerhits = 0;
+
+
+    //*************************************// Initialize Enemy abilities://************************************* */
+    //shadow revenant
+    if (enemyType === 'shadow_revenant') {
+        enemy.voidStrikeCount = 0; // Tracks Void Strike attacks
+    }
+    // Initialize Ancient Guard abilities
+    if (enemyType === 'ancient_guard') {
+        enemy.attackCount = 0; // Tracks attacks for special ability
+    }
+
 
     // Initialize shield at the start of the battle
     playerStats.shield = 200; 
@@ -322,7 +430,18 @@ activeBattles[userId].lastPress = now;
             let attackName = 'Punch';
             let healingMessage = '';
             
-           
+            if (enemyType === 'goblin_lord') {
+                // Update the shared boss HP in memory
+                activeArkBosses['goblin_lord'].hp = enemy.hp;
+            
+                // Save the updated HP to the database
+                await ArkBoss.updateOne(
+                    { bossName: 'goblin_lord' },
+                    { $set: { hp: Math.max(0, enemy.hp) } }
+                );
+            }
+            
+            
             
 
             if (userProfile.equippedWeapon) {
@@ -351,18 +470,18 @@ activeBattles[userId].lastPress = now;
                     }
                 } else if (userProfile.equippedWeapon === 'frostbite axe') {
                     playerStats.frostbiteHits++; // Increment the hit count
-                    playerDamage = 130 + (playerStats.frostbiteHits - 1) * 20; // Calculate damage based on hits
+                    playerDamage = 208 + (playerStats.frostbiteHits - 1) * 30; // Calculate damage based on hits
                     
                     // Cap the damage to a maximum of 599
-                    if (playerDamage > 599) {
-                        playerDamage = 599;
+                    if (playerDamage > 799) {
+                        playerDamage = 799;
                     }
                 
                     attackName = `Blizzard Strike with ${frostbiteEmoji} Frostbite Axe!`;
                     
                     // Set message for increased attack
                     if (playerStats.frostbiteHits > 1) {
-                        attackName += `\nWeapon Attack has increased by 10! Current damage: ${playerDamage}`;
+                        attackName += `\nWeapon Attack has increased by 30! Current damage: ${playerDamage}`;
                     }
                 }else  if (userProfile.equippedWeapon === 'riftbreaker') {
                     playerStats.riftbreakerhits++; // Increment the attack count
@@ -430,14 +549,34 @@ activeBattles[userId].lastPress = now;
                 } 
             }
 
-            enemy.hp -= playerDamage;
+            // enemy.hp -= playerDamage;
 
-            
+            // Shadow Dodge: 20% chance to avoid player's attack Shadow Revenant ability
+            let enemyDodgeMessage = "";
+            if (enemyType === 'shadow_revenant' && Math.random() < 0.2) {
+                enemyDodgeMessage = `\n🛡️ **Shadow Revenant dodged your attack!**`;
+                playerDamage = 0; // Cancel player attack
+            }
 
+// Apply player damage if not dodged
+enemy.hp -= playerDamage;
+
+if (enemyType === 'goblin_lord') {
+    await ArkBoss.updateOne(
+        { bossName: 'goblin_lord' },
+        { $set: { hp: Math.max(0, enemy.hp) } }
+    );
+}
 
 
             if (enemy.hp <= 0) {
                 collector.stop();
+
+                if (enemyType === 'goblin_lord') {
+                    await ArkBoss.deleteOne({ bossName: 'goblin_lord' });
+                    message.channel.send(`🔥 **Goblin Lord has been slain!**`);
+                }
+                
             
                 const goldReward = Math.floor(Math.random() * (enemy.coinReward.max - enemy.coinReward.min + 1)) + enemy.coinReward.min;
 
@@ -462,6 +601,12 @@ activeBattles[userId].lastPress = now;
                 const expReward = enemy.expReward;
                 userProfile.experience += expReward;
                 
+                 // ✅ Ensure defeatedEnemies array is updated
+                if (!userProfile.defeatedEnemies.includes(enemy.id)) {
+                    userProfile.defeatedEnemies.push(enemy.id);
+                    console.log(`Enemy ${enemy.id} added to defeatedEnemies`); // Debugging
+                    await userProfile.save();
+                }
 
 
 
@@ -638,6 +783,41 @@ activeBattles[userId].lastPress = now;
                 let damageTaken = enemyDamage;
 
                 let shieldMessage = '';
+
+
+                //Shadow Revenant Double Damage
+                let voidStrikeMessage = "";
+
+                // Shadow Revenant's Void Strike: Every 3rd attack does double damage
+                if (enemyType === 'shadow_revenant') {
+                    enemy.voidStrikeCount++;
+                    if (enemy.voidStrikeCount % 3 === 0) {
+                        enemyDamage *= 2; // Double damage on every 3rd attack
+                        voidStrikeMessage = `\n🔥 **Void Strike! Shadow Revenant deals double damage!**`;
+                    }
+                }
+
+                //ancient guard's ability
+                let titanResurgenceMessage = "";
+
+                // Ancient Guard's "Titan's Resurgence": Every 5th attack, deals 59 damage and heals +500 HP
+               // Ancient Guard's "Titan's Resurgence": Every 5th attack, deals 59 damage and heals +500 HP
+               if (enemyType === 'ancient_guard') {
+                enemy.attackCount++;
+                if (enemy.attackCount % 5 === 0) {
+                    let extraDamage = 59; // Fixed damage
+            
+                    // ✅ Ensure the 59 extra damage is applied to player
+                    damageTaken += extraDamage;
+            
+                    titanResurgenceMessage = `\n🛡️ **Titan's Resurgence! Ancient Guard deals ${extraDamage} damage\n**`;
+                }
+            }
+
+            
+            
+            
+
                 
 
                 // Check if shield is active and the equipped weapon is Frostbite Axe
@@ -660,7 +840,7 @@ activeBattles[userId].lastPress = now;
 
                 // Prepare the embed description
                 // Update battle embed after an attack
-                let description = ` ${enemyType.charAt(0).toUpperCase() + enemyType.slice(1)} HP: 💚 ${generateHealthBar(enemy.hp, enemy.maxHp)}\n\nYour HP: ❤️ ${generateHealthBar(playerStats.hp, playerStats.maxHp)}\n\nYou used **${attackName}** and did 💥${playerDamage} damage! | ${enemyType.charAt(0).toUpperCase() + enemyType.slice(1)} attacked you! 💥${enemyDamage} damage!\n ${arcaneBoostMessage}\n${dodgemsg}`;
+                let description = ` ${enemyType.charAt(0).toUpperCase() + enemyType.slice(1)} HP: 💚 ${generateHealthBar(enemy.hp, enemy.maxHp)}\n\nYour HP: ❤️ ${generateHealthBar(playerStats.hp, playerStats.maxHp)}\n\nYou used **${attackName}** and did 💥${playerDamage} damage!\n${voidStrikeMessage} ${titanResurgenceMessage} ${enemyType.charAt(0).toUpperCase() + enemyType.slice(1)} attacked you! 💥${enemyDamage} damage! ${arcaneBoostMessage} ${dodgemsg} ${enemyDodgeMessage}`;
 
                 // ✅ Re-enable heal button ONLY IF player still has potions
             if (userProfile.inventory.battleItems && userProfile.inventory.battleItems["Heal Potion"] > 0) {
@@ -689,7 +869,7 @@ activeBattles[userId].lastPress = now;
                     console.error("Failed to update interaction:", error.message);
                 }
                 
-
+                
                 if (playerStats.hp <= 0) {
                     playerStats.hp = 0; // Ensure no negative HP
                     collector.stop(); // Stop this player's battle

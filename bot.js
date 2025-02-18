@@ -1,6 +1,6 @@
 require('dotenv').config(); // Load environment variables
 const fs = require('fs'); // Import the file system module
-const { Client, GatewayIntentBits, EmbedBuilder, ActivityType } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActivityType, AttachmentBuilder } = require('discord.js');
 const mongoose = require('mongoose');
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 const { fight, enemies, knockedOutPlayers } = require('./battle/battle');
@@ -12,6 +12,8 @@ const Market = require('./marketSchema.js'); // Market schema to store listings
 const allowedMarketWeapons = ['riftbreaker', 'frostbite axe'];
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const Guild = require('./guildSchema');
+const { handleMapCommand, handleExploreCommand } = require('./map.js');
+const ArkBoss = require('./arkBossSchema'); // Import schema
 
 async function getUserProfile(userId) {
     try {
@@ -124,7 +126,10 @@ client.on('messageCreate', async (message) => {
                         battleItems: {},
                         fish: {},
                         craftableItems: {}
-                    }
+                    },
+                    guild: null, // ✅ Add guild field
+                    currentArea: 'mystic outskirts', // ✅ Ensure new players start in Area 1
+                    defeatedEnemies: [] // ✅ Initialize defeated enemies array
                 });
             }
 
@@ -822,14 +827,15 @@ if (message.content === '!inventory' || message.content === '!inv') {
         }
 
 
- 
-
+    const file = new AttachmentBuilder('./images/bag.png', { name: 'bag.png' });
     const embed = new EmbedBuilder()
         .setColor('#00ff00')
         .setTitle(`${message.author.username}'s Inventory`)
-        .setDescription(inventoryList);
+        .setDescription(inventoryList)
+        .setThumbnail('attachment://bag.png');
+        
 
-    message.channel.send({ embeds: [embed] });
+    message.channel.send({ embeds: [embed], files: [file] });
 }
 
 // Command to claim daily rewards
@@ -1456,6 +1462,7 @@ if (message.content.startsWith('!craft')) {
 
     // No arguments: Show craftable items list
     if (args.length === 0) {
+        const file = new AttachmentBuilder('./images/craft.jpg', { name: 'craft.jpg' });
         const embed = new EmbedBuilder()
             .setColor('#1E90FF') // Blue for crafting info
             .setTitle('🔨 Crafting Menu')
@@ -1473,10 +1480,10 @@ if (message.content.startsWith('!craft')) {
                     inline: false,
                 }
             )
-            .setThumbnail('https://example.com/riftbreaker.png') // Optional image for the menu
+            .setImage('attachment://craft.jpg')
             .setFooter({ text: 'Gather resources and craft legendary items!' });
     
-        await message.channel.send({ embeds: [embed] });
+        await message.channel.send({ embeds: [embed] , files: [file] });
         return;
     }
     
@@ -2395,41 +2402,37 @@ const giveDailyReward = async (guild) => {
     const currentTime = new Date();
     const lastRewardedTime = guild.lastRewarded ? new Date(guild.lastRewarded) : null;
 
-    // Check if 12 hours have passed since last reward
-    if (lastRewardedTime && currentTime - lastRewardedTime < 12 * 60 * 60 * 1000) {
-        console.log(`[DEBUG] Skipping reward for ${guild.name}, cooldown active.`);
-        return;
-    }
+    // If lastRewarded is null (first-time reward) or 12 hours have passed, give the reward
+    if (!lastRewardedTime || (currentTime - lastRewardedTime) >= 12 * 60 * 60 * 1000) {
+        console.log(`[DEBUG] Rewarding Mystic Gems to ${guild.name}`);
 
-    // Reward 50 Mystic Gems to each member
-    for (const memberId of guild.members) {
-        let userProfile = await getUserProfile(memberId);
-        if (userProfile) {
-            userProfile.mysticGems = (userProfile.mysticGems || 0) + 50;
-            await userProfile.save();
+        for (const memberId of guild.members) {
+            let userProfile = await getUserProfile(memberId);
+            if (userProfile) {
+                userProfile.mysticGems = (userProfile.mysticGems || 0) + 50;
+                await userProfile.save();
 
-            // Send a DM to the member
-            const user = await client.users.fetch(memberId);
-            if (user) {
+                // Send a DM to the member
                 try {
+                    const user = await client.users.fetch(memberId);
                     await user.send(`🎉 You received **50 Mystic Gems** from **${guild.name}**! 💎`);
                 } catch (error) {
-                    console.log(`Could not send DM to ${user.tag}: ${error.message}`);
+                    console.log(`Could not send DM to ${memberId}: ${error.message}`);
                 }
             }
         }
+
+        // Update lastRewarded time and save to DB
+        guild.lastRewarded = currentTime;
+        await guild.save();
+    } else {
+        console.log(`[DEBUG] Skipping reward for ${guild.name}, cooldown active.`);
     }
-
-    // Update lastRewarded to the current time
-    guild.lastRewarded = currentTime;
-    await guild.save();
-
-    console.log(`Distributed 50 Mystic Gems to all members of ${guild.name}`);
 };
 
 
 
-setInterval(async () => {
+const distributeGuildRewards = async () => {
     console.log(`[DEBUG] Checking guild rewards at ${new Date().toISOString()}`);
 
     const verifiedGuilds = await Guild.find({ verified: true });
@@ -2437,7 +2440,16 @@ setInterval(async () => {
     for (const guild of verifiedGuilds) {
         await giveDailyReward(guild);
     }
-}, 12 * 60 * 60 * 1000); // Runs every 12 hours
+};
+
+// Run once when bot starts
+distributeGuildRewards();
+
+// Then run every 12 hours
+setInterval(distributeGuildRewards, 12 * 60 * 60 * 1000);
+// setInterval(distributeGuildRewards, 60 * 1000); // Runs every 1 minute
+
+
 
 
 
@@ -2694,15 +2706,151 @@ if (message.content.startsWith('!guild withdraw') || message.content.startsWith(
 }
 
 
+//guild points
+if (message.content === "!guild points" || message.content === "!g points") {
+    let userProfile = await getUserProfile(userId);
+    if (!userProfile.guild) return message.channel.send("You're not in a guild!");
+
+    let userGuild = await Guild.findOne({ name: userProfile.guild });
+    if (!userGuild) return message.channel.send("Guild not found!");
+
+    let rankings = [...userGuild.memberPoints.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([id, points], index) => `**${index + 1}.** <@${id}> → **${points}** pts`)
+        .join("\n");
+
+    const embed = new EmbedBuilder()
+        .setColor("#FFD700")
+        .setTitle(`🏆 ${userGuild.name} Guild Points`)
+        .setDescription(`**Total Guild Points:** **${userGuild.guildPoints}**\n\n**🏅 Member Contributions:**\n${rankings || "No contributions yet."}`)
+        .addFields({
+            name: "💡 How to Earn Guild Points?",
+            value: "Guild Points are earned when a guild member **defeats an enemy** in battle! The stronger the enemy, the more points your guild earns.\n\n" +
+                "**💥 Points Per Enemy Defeated:**\n" +
+                "- 🟢 **Goblin** → **10 pts**\n" +
+                "- 🐺 **Wolf** → **15 pts**\n" +
+                "- 🏹 **Orc** → **20 pts**\n" +
+                "- 👸 **Elysia** → **25 pts**\n" +
+                "- ⚔️ **Cursed Knight** → **30 pts**\n" +
+                "- 🛡 **Ancient Guard** → **35 pts**\n" +
+                "- 🐉 **Tundragon** → **40 pts**\n\n" +
+                "**📈 Why Earn Guild Points?**\n" +
+                "- 🏅 **Rank your guild higher** in the leaderboard (`!rank guild`).\n" +
+                "- 🎖 **Prove your guild’s strength** and compete against others!\n" +
+                "- 🔥 **Weekly Guild Resets** keep the competition fresh!"
+        });
+
+    message.channel.send({ embeds: [embed] });
+}
+
+
+
+if (message.content === "!rank guild") {
+    let guilds = await Guild.find().sort({ guildPoints: -1 }).limit(10);
+
+    let leaderboard = guilds.map((g, index) => `**${index + 1}.** ${g.name} → **${g.guildPoints}** pts`).join("\n");
+
+    const embed = new EmbedBuilder()
+        .setColor("#FFD700")
+        .setTitle("🏆 Guild Leaderboard")
+        .setDescription(leaderboard || "No guilds have earned points yet.");
+
+    message.channel.send({ embeds: [embed] });
+}
+
+const REWARD_CHANNEL_ID = "1338930761226522735"; // Channel to send results
+
+let isProcessingRewards = false; // Lock to prevent duplicate executions
+
+setInterval(async () => {
+    if (isProcessingRewards) return; // Prevent duplicate execution
+    isProcessingRewards = true; // Lock the process
+
+    let guilds = await Guild.find().sort({ guildPoints: -1 }).limit(10); // Sort guilds by points
+    if (guilds.length === 0) {
+        isProcessingRewards = false;
+        return;
+    }
+
+    const rewards = [
+        { gems: 1000, coins: 1000000 }, // 1st place
+        { gems: 750, coins: 500000 },   // 2nd place
+        { gems: 550, coins: 250000 },   // 3rd place
+        { gems: 0, coins: 100000 },     // 4th place
+        { gems: 0, coins: 50000 },      // 5th place
+        { gems: 0, coins: 10000 },      // 6th place
+    ];
+
+    let rewardMessage = "**🏆 Weekly Guild Rankings & Rewards! 🏆**\n\n";
+    
+    for (let i = 0; i < guilds.length; i++) {
+        let guild = guilds[i];
+        let reward = rewards[i] || { gems: 0, coins: 5000 }; // Default for 7th and below
+
+        guild.bank.coins += reward.coins;
+        guild.bank.gems += reward.gems;
+        await guild.save();
+
+        rewardMessage += `**${i + 1}. ${guild.name}** → 🏅 **${guild.guildPoints} pts**\n`;
+        rewardMessage += `💰 **+${reward.coins} Coins** | 💎 **+${reward.gems} Gems** added to Guild Bank!\n\n`;
+    }
+
+    let resultsChannel = await client.channels.fetch(REWARD_CHANNEL_ID);
+    if (resultsChannel) {
+        await resultsChannel.send({ embeds: [new EmbedBuilder().setColor("#FFD700").setTitle("🏆 Weekly Guild Results!").setDescription(rewardMessage)] });
+    }
+
+    // Reset guildPoints and memberPoints after distributing rewards
+    await Guild.updateMany({}, { $set: { guildPoints: 0, memberPoints: {} } });
+
+    console.log("✅ Weekly Guild Points Reset & Rewards Distributed!");
+
+    isProcessingRewards = false; // Unlock after completion
+}, 7 * 24 * 60 * 60 * 1000); // Runs every 7 days
 
 
 
 
 
+// Inside the message event listener
+if (message.content === '!map') {
+    handleMapCommand(message);
+}
+
+if (message.content.startsWith('!map explore') || message.content.startsWith('!map exp')) {
+    const args = message.content.split(' ').slice(2);
+    handleExploreCommand(message, args);
+}
 
 
 
+//ark boss
+if (message.content.startsWith('!spawn arkboss') || message.content.startsWith('!spawn ab')) {
+    if (!message.member.permissions.has('ADMINISTRATOR')) {
+        return message.channel.send("❌ You don't have permission to spawn the boss!");
+    }
 
+    const bossName = 'goblin_lord';
+    const maxHp = 100000;
+
+    let boss = await ArkBoss.findOne({ bossName });
+    if (boss) {
+        return message.channel.send(`⚠️ **Goblin Lord is already spawned with ${boss.hp} HP!**`);
+    }
+
+    boss = new ArkBoss({ bossName, hp: maxHp, maxHp });
+    await boss.save();
+
+    message.channel.send(`🔥 **Goblin Lord has been spawned with ${maxHp} HP!**`);
+
+    // ✅ Send a notification to the boss battle channel (1341024607523573874)
+    const bossChannel = client.channels.cache.get('1341024607523573874');
+    if (bossChannel) {
+        bossChannel.send(`⚠️ **A powerful boss has appeared!**\n👹 **Goblin Lord** has been spawned with **100,000 HP**!\nUse \`!fight goblin_lord\` to join the battle! ⚔️`);
+    } else {
+        console.error("Failed to find channel 1341024607523573874");
+    }
+}
 
 
 

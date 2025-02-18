@@ -1,4 +1,3 @@
-// userSchema.js
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
@@ -26,7 +25,11 @@ const userSchema = new mongoose.Schema({
     lastReset: Date,
     lastQuestGeneration: Date
   },
-  guild: { type: String, default: null }
+  guild: { type: String, default: null },
+  
+  // New fields for areas and defeated enemies
+  currentArea: { type: String, default: 'mystic outskirts' }, // Store the current area
+  defeatedEnemies: { type: [Number], default: [] } // Track defeated enemy IDs
 });
 
 module.exports = mongoose.model('User', userSchema);

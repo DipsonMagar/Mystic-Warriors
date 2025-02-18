@@ -1,6 +1,7 @@
 const activeBattles = new Set();
 const activeSearches = new Set();
 const searchingPlayers = new Set();
+const activeArkBosses = {}; // Stores shared Ark Boss data
 
 
 function isUserInBattle(userId) {
@@ -42,5 +43,5 @@ function removeUserFromSearch(userId) {
 
 module.exports = { 
     activeBattles, isUserInBattle, addUserToBattle, removeUserFromBattle, 
-    isUserSearching, addUserToSearch, removeUserFromSearch , searchingPlayers
+    isUserSearching, addUserToSearch, removeUserFromSearch , searchingPlayers, activeArkBosses
 };
